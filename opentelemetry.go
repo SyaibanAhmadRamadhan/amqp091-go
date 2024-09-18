@@ -2,6 +2,7 @@ package amqp091
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -34,17 +35,13 @@ func recordError(span trace.Span, err error) {
 }
 
 func (t *Otel) TracePublisherStart(ctx context.Context, payload *basicPublish) context.Context {
-	if !trace.SpanFromContext(ctx).IsRecording() {
-		return ctx
-	}
-
 	spanName := "Rabbitmq Publish Message"
 	ctx, span := t.tracer.Start(ctx, spanName)
 	span.SetAttributes(
 
 		attribute.String("messaging.rabbitmq.exchange", payload.Exchange),
 		attribute.String("messaging.rabbitmq.destination.routing_key", payload.RoutingKey),
-		attribute.String("messaging.rabbitmq.body", truncateBody(payload.Body)),
+		//attribute.String("messaging.rabbitmq.body", truncateBody(payload.Body)),
 		attribute.Bool("messaging.rabbitmq.mandatory", payload.Mandatory),
 		attribute.Bool("messaging.rabbitmq.immediate", payload.Immediate),
 		attribute.String("messaging.rabbitmq.properties.content_type", payload.Properties.ContentType),
@@ -61,6 +58,7 @@ func (t *Otel) TracePublisherStart(ctx context.Context, payload *basicPublish) c
 		attribute.String("messaging.rabbitmq.properties.app_id", payload.Properties.AppId),
 		attribute.String("messaging.rabbitmq.properties.headers", formatHeaders(payload.Properties.Headers)),
 	)
+	span.End()
 	return ctx
 }
 
@@ -75,10 +73,11 @@ func (t *Otel) TracePublishEnd(ctx context.Context, err error) {
 func truncateBody(body []byte) string {
 	const maxBodyLength = 1024
 
+	utf8Body := base64.StdEncoding.EncodeToString(body)
 	if len(body) > maxBodyLength {
-		return string(body[:maxBodyLength]) + "...(truncated)"
+		return string(utf8Body[:maxBodyLength]) + "...(truncated)"
 	}
-	return string(body)
+	return utf8Body
 }
 
 func formatHeaders(headers map[string]interface{}) string {
