@@ -7,7 +7,6 @@ package amqp091
 
 import (
 	"bufio"
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -79,11 +78,6 @@ type Config struct {
 	PublishTracer PublishTracer
 }
 
-type PublishTracer interface {
-	TracePublisherStart(ctx context.Context, payload *basicPublish) context.Context
-	TracePublishEnd(ctx context.Context, err error)
-}
-
 // NewConnectionProperties creates an amqp.Table to be used as amqp.Config.Properties.
 //
 // Defaults to library-defined values. For empty properties, use make(amqp.Table) instead.
@@ -130,7 +124,8 @@ type Connection struct {
 	Properties Table    // Server properties
 	Locales    []string // Server locales
 
-	closed        int32 // Will be 1 if the connection is closed, 0 otherwise. Should only be accessed as atomic
+	closed int32 // Will be 1 if the connection is closed, 0 otherwise. Should only be accessed as atomic
+
 	publishTracer PublishTracer
 }
 
@@ -289,6 +284,10 @@ func DialConfig(url string, config Config) (*Connection, error) {
 		conn = client
 	}
 
+	if config.PublishTracer == nil {
+		otel := NewOtel(uri)
+		config.PublishTracer = otel
+	}
 	return Open(conn, config)
 }
 
@@ -298,10 +297,6 @@ a transport.  Use this method if you have established a TLS connection or wish
 to use your own custom transport.
 */
 func Open(conn io.ReadWriteCloser, config Config) (*Connection, error) {
-	if config.PublishTracer == nil {
-		otel := NewOtel()
-		config.PublishTracer = otel
-	}
 	c := &Connection{
 		publishTracer: config.PublishTracer,
 		conn:          conn,

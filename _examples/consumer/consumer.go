@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	amqp "github.com/rabbitmq/amqp091-go"
+	amqp "github.com/SyaibanAhmadRamadhan/amqp091-go"
 )
 
 var (

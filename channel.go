@@ -1524,7 +1524,17 @@ When Publish does not return an error and the channel is in confirm mode, the
 internal counter for DeliveryTags with the first confirmation starts at 1.
 */
 func (ch *Channel) PublishWithContext(ctx context.Context, exchange, key string, mandatory, immediate bool, msg Publishing) error {
-	_, err := ch.PublishWithDeferredConfirmCtx(ctx, exchange, key, mandatory, immediate, msg)
+	ctx = ch.connection.publishTracer.TracePublisherStart(ctx, TracePublisherStartInput{
+		Msg:       msg,
+		Exchange:  exchange,
+		Key:       key,
+		Mandatory: mandatory,
+		Immediate: immediate,
+	})
+	_, err := ch.PublishWithDeferredConfirm(exchange, key, mandatory, immediate, msg)
+	if err != nil {
+		ch.connection.publishTracer.RecordError(ctx, err)
+	}
 	return err
 }
 
@@ -1572,62 +1582,6 @@ func (ch *Channel) PublishWithDeferredConfirm(exchange, key string, mandatory, i
 		if ch.confirming {
 			ch.confirms.unpublish()
 		}
-		return nil, err
-	}
-
-	return dc, nil
-}
-
-/*
-PublishWithDeferredConfirmCtx behaves identically to Publish using context, but additionally
-returns a DeferredConfirmation, allowing the caller to wait on the publisher
-confirmation for this message. If the channel has not been put into confirm
-mode, the DeferredConfirmation will be nil.
-*/
-func (ch *Channel) PublishWithDeferredConfirmCtx(ctx context.Context, exchange, key string, mandatory, immediate bool, msg Publishing) (*DeferredConfirmation, error) {
-	publishMsg := &basicPublish{
-		Exchange:   exchange,
-		RoutingKey: key,
-		Mandatory:  mandatory,
-		Immediate:  immediate,
-		Body:       msg.Body,
-		Properties: properties{
-			Headers:         msg.Headers,
-			ContentType:     msg.ContentType,
-			ContentEncoding: msg.ContentEncoding,
-			DeliveryMode:    msg.DeliveryMode,
-			Priority:        msg.Priority,
-			CorrelationId:   msg.CorrelationId,
-			ReplyTo:         msg.ReplyTo,
-			Expiration:      msg.Expiration,
-			MessageId:       msg.MessageId,
-			Timestamp:       msg.Timestamp,
-			Type:            msg.Type,
-			UserId:          msg.UserId,
-			AppId:           msg.AppId,
-		},
-	}
-
-	ctx = ch.connection.publishTracer.TracePublisherStart(ctx, publishMsg)
-
-	if err := msg.Headers.Validate(); err != nil {
-		ch.connection.publishTracer.TracePublishEnd(ctx, err)
-		return nil, err
-	}
-
-	ch.m.Lock()
-	defer ch.m.Unlock()
-
-	var dc *DeferredConfirmation
-	if ch.confirming {
-		dc = ch.confirms.publish()
-	}
-
-	if err := ch.send(publishMsg); err != nil {
-		if ch.confirming {
-			ch.confirms.unpublish()
-		}
-		ch.connection.publishTracer.TracePublishEnd(ctx, err)
 		return nil, err
 	}
 
