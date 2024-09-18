@@ -7,6 +7,7 @@ package amqp091
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -74,6 +75,13 @@ type Config struct {
 	// If Dial is nil, net.DialTimeout with a 30s connection and 30s deadline is
 	// used during TLS and AMQP handshaking.
 	Dial func(network, addr string) (net.Conn, error)
+
+	PublishTracer PublishTracer
+}
+
+type PublishTracer interface {
+	TracePublisherStart(ctx context.Context, payload *basicPublish) context.Context
+	TracePublishEnd(ctx context.Context, err error)
 }
 
 // NewConnectionProperties creates an amqp.Table to be used as amqp.Config.Properties.
@@ -122,7 +130,8 @@ type Connection struct {
 	Properties Table    // Server properties
 	Locales    []string // Server locales
 
-	closed int32 // Will be 1 if the connection is closed, 0 otherwise. Should only be accessed as atomic
+	closed        int32 // Will be 1 if the connection is closed, 0 otherwise. Should only be accessed as atomic
+	publishTracer PublishTracer
 }
 
 type readDeadliner interface {
@@ -289,15 +298,20 @@ a transport.  Use this method if you have established a TLS connection or wish
 to use your own custom transport.
 */
 func Open(conn io.ReadWriteCloser, config Config) (*Connection, error) {
+	if config.PublishTracer == nil {
+		otel := NewOtel()
+		config.PublishTracer = otel
+	}
 	c := &Connection{
-		conn:      conn,
-		writer:    &writer{bufio.NewWriter(conn)},
-		channels:  make(map[uint16]*Channel),
-		rpc:       make(chan message),
-		sends:     make(chan time.Time),
-		errors:    make(chan *Error, 1),
-		close:     make(chan struct{}),
-		deadlines: make(chan readDeadliner, 1),
+		publishTracer: config.PublishTracer,
+		conn:          conn,
+		writer:        &writer{bufio.NewWriter(conn)},
+		channels:      make(map[uint16]*Channel),
+		rpc:           make(chan message),
+		sends:         make(chan time.Time),
+		errors:        make(chan *Error, 1),
+		close:         make(chan struct{}),
+		deadlines:     make(chan readDeadliner, 1),
 	}
 	go c.reader(conn)
 	return c, c.open(config)
